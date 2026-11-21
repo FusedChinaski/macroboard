@@ -47,7 +47,6 @@ class KeySelect(SelectEntity):
         self._attr_device_info = DeviceInfo(
             identifiers=device.identifiers, connections=device.connections
         )
-        self._attr_extra_state_attributes = {"macroboard_key": key, "macroboard_device": board.device_id}
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self._manager.add_listener(self._refresh))
@@ -55,6 +54,16 @@ class KeySelect(SelectEntity):
     @callback
     def _refresh(self) -> None:
         self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "macroboard_key": self._key,
+            "macroboard_device": self._board.device_id,
+            "macroboard_board": self._board.name,
+            "macroboard_input": self._board.keys.get(self._key),
+            "macroboard_status": self._board.status,
+        }
 
     @property
     def options(self) -> list[str]:

@@ -36,7 +36,7 @@ class MacroboardPanel extends HTMLElement {
       if (!a.macroboard_device) continue;
       const dev = a.macroboard_device;
       const d = (h.devices && h.devices[dev]) || {};
-      if (!boards[dev]) boards[dev] = { id: dev, name: d.name_by_user || d.name || "Macroboard", keys: [] };
+      if (!boards[dev]) boards[dev] = { id: dev, name: a.macroboard_board || d.name_by_user || d.name || "Macroboard", keys: [], status: a.macroboard_status || "" };
       boards[dev].keys.push({ eid, key: a.macroboard_key, state: st.state, options: a.options || [] });
     }
     const list = Object.values(boards);
@@ -47,7 +47,7 @@ class MacroboardPanel extends HTMLElement {
 
   _signature() {
     const f = this._focus() || "";
-    return f + JSON.stringify(this._boards().map((b) => [b.id, b.name, b.keys.map((k) => [k.state, k.options.length])]));
+    return f + JSON.stringify(this._boards().map((b) => [b.id, b.name, b.status, b.keys.map((k) => [k.state, k.options.length])]));
   }
 
   _select(eid, option) {
@@ -70,6 +70,7 @@ class MacroboardPanel extends HTMLElement {
     const cards = boards.map((b) => `
       <section class="card">
         <h2>${esc(b.name)}</h2>
+        <p class="status">Ultimo evento: ${esc(b.status)}</p>
         ${b.keys.map((k) => `
           <label class="row">
             <span class="num">${k.key}</span>
@@ -97,6 +98,7 @@ class MacroboardPanel extends HTMLElement {
         .hint { color: var(--secondary-text-color); margin: 4px 0 16px; font-size:14px; }
         .card { background: var(--card-background-color, #fff); border-radius: 12px; padding: 16px; margin-bottom:16px;
                 box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15)); }
+        .status { margin:-6px 0 12px; font-size:13px; color: var(--secondary-text-color); }
         h2 { margin:0 0 12px; font-size:18px; font-weight:500; }
         .row { display:flex; align-items:center; gap:12px; margin:10px 0; }
         .num { flex:0 0 36px; height:36px; border-radius:8px; display:grid; place-items:center; font-weight:700;

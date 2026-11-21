@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import logging
 import re
 import time
+from datetime import datetime
 from typing import Callable
 
 from homeassistant.const import EVENT_STATE_CHANGED, STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -52,6 +53,8 @@ class Board:
     knob_btn: str | None = None
     last_light: str | None = None
     btn_pressed_at: float = 0.0
+    status: str = "Nessuna pressione ricevuta da Home Assistant"
+
 
 
 class MacroboardManager:
@@ -179,6 +182,12 @@ class MacroboardManager:
         self._listeners.append(cb)
         return lambda: self._listeners.remove(cb)
 
+    def _set_status(self, board: Board, text: str) -> None:
+        board.status = f"{datetime.now().strftime('%H:%M:%S')} – {text}"
+        _LOGGER.info("Macroboard %s: %s", board.name, text)
+        for cb in list(self._listeners):
+            cb()
+
     # ------------------------------------------------------------------ eventi
     @callback
     def _on_any_state(self, event: Event) -> None:
@@ -208,9 +217,11 @@ class MacroboardManager:
                         self.hass.async_create_task(self.async_push_board(board))
                 return
             for n, key_eid in board.keys.items():
-                if key_eid == eid and new.state == "on" and old is not None and old.state == "off":
+                if key_eid != eid:
+                    continue
+                if new.state == "on" and (old is None or old.state != "on"):
                     self.hass.async_create_task(self._press_key(board, n))
-                    return
+                return
             if eid == board.knob:
                 self._turn_knob(board, old, new)
                 return
@@ -220,14 +231,22 @@ class MacroboardManager:
 
     async def _press_key(self, board: Board, n: int) -> None:
         light = self.get_assignment(board.device_id, n)
-        _LOGGER.info("Macroboard %s: tasto %s -> %s", board.name, n, light)
         if not light:
+            self._set_status(board, f"Tasto {n} premuto, nessuna luce assegnata")
             return
         board.last_light = light
+        state = self.hass.states.get(light)
+        if state is None or state.state == STATE_UNAVAILABLE:
+            self._set_status(board, f"Tasto {n}: {light} non disponibile")
+            return
         try:
             await self.hass.services.async_call("light", "toggle", {"entity_id": light}, blocking=True)
-        except Exception:  # noqa: BLE001
+        except Exception as err:  # noqa: BLE001
             _LOGGER.exception("Macroboard: impossibile commutare %s", light)
+            self._set_status(board, f"Tasto {n}: errore su {light}: {err}")
+            return
+        new = self.hass.states.get(light)
+        self._set_status(board, f"Tasto {n} → {state.name}: {state.state} → {new.state if new else '?'}")
 
     def _target(self, board: Board) -> str | None:
         if board.last_light:
