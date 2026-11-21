@@ -34,10 +34,13 @@ Serve Home Assistant già funzionante.
 3. Fatto. Il display dice "Tieni premuta la manopola per assegnare le luci".
 
 ### Uso quotidiano
-- **Tieni premuta la manopola ~1 s** → QR sul display → inquadralo → scegli una luce per ogni tasto.
-- **Tasto** → accende/spegne la sua luce. Il display mostra il nome della luce accanto al numero del tasto.
-- **Gira la manopola** → luminosità dell'ultima luce usata. **Premi la manopola** → la accende/spegne.
+- **Display:** ora e data al centro, in basso un segmento per ogni tasto con sopra il nome di ciò che comanda (ambra = acceso).
+- **Tasto** → accende/spegne ciò che gli hai assegnato (luci, prese, ventilatori) o attiva una scena/script. Il display mostra nome e nuovo stato.
+- **Clic sulla manopola** → passa dalla pagina 1 alla pagina 2: stessi tasti, altre assegnazioni (es. "Luci" e "PC").
+- **Gira la manopola** → luminosità dell'ultima luce usata, con l'arco sul display.
+- **Tieni premuta la manopola ~1 s** → QR sul display → inquadralo → scegli cosa fa ogni tasto, su entrambe le pagine, e rinomina le pagine.
 - Display e LED si accendono con un tocco o una vibrazione e si spengono dopo 10 s (modificabile: *Timeout luci* nel dispositivo).
+- **3 o 6 tasti:** si sceglie nella pagina Macroboard. Con 6 tasti il display mostra i nomi della riga che hai usato per ultima.
 - Più Macroboard in casa: ognuna ha il suo QR e la sua scheda nella pagina Macroboard.
 
 Il telefono deve essere sulla stessa rete di Home Assistant (o collegato via Tailscale/Nabu Casa).
@@ -47,6 +50,9 @@ Il telefono deve essere sulla stessa rete di Home Assistant (o collegato via Tai
 ## Per chi prepara le board (Ivan)
 
 ### Compilare il firmware (una volta per versione)
+Servono **entrambi** i file della cartella `firmware/` nella stessa cartella: `macroboard-kit.yaml` e `macroboard_ui.h`
+(il modo più semplice: su GitHub **Code → Download ZIP**).
+Se il display è montato ruotato, cambia `display_rotation` in cima al file (0 / 90 / 180 / 270).
 ```
 cd D:\macroboard
 py -V:3.13 -m esphome compile macroboard-kit.yaml

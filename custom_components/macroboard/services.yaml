@@ -1,0 +1,16 @@
+set_page_name:
+  fields:
+    device_id:
+      required: true
+      selector:
+        text:
+    page:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 2
+    name:
+      required: true
+      selector:
+        text:

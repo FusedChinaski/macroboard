@@ -5,23 +5,33 @@
 #  Niente Wi-Fi, chiavi o indirizzi qui dentro:
 #   - Wi-Fi  -> rete "Macroboard Setup" dal telefono (o web.esphome.io)
 #   - chiave -> la imposta Home Assistant al primo "Configura"
-#   - QR, etichette tasti -> li invia l'integrazione Macroboard di HA
+#   - nomi tasti, stati luci, QR -> li invia l'integrazione Macroboard
+#
+#  Comandi:
+#   tasto              -> azione assegnata (pagina attiva)
+#   manopola girata    -> luminosità dell'ultima luce usata
+#   manopola, clic     -> cambia pagina (1 <-> 2)
+#   manopola, 1 s      -> QR per assegnare i tasti
 # =====================================================================
 
 substitutions:
   name: macroboard
   friendly_name: Macroboard
+  display_rotation: "0"      # 0 / 90 / 180 / 270 se il display è montato ruotato
 
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  name_add_mac_suffix: true          # ogni board ha un nome unico: macroboard-a1b2c3
+  name_add_mac_suffix: true
   project:
     name: ivan.macroboard
-    version: "1.0.0"
+    version: "1.1.0"
+  includes:
+    - macroboard_ui.h
   on_boot:
     priority: -100
     then:
+      - script.execute: refresh_home
       - script.execute: wake
 
 esp32:
@@ -38,7 +48,7 @@ psram:
 logger:
 
 api:
-  encryption: {}                     # senza chiave: la imposta Home Assistant al primo collegamento
+  encryption: {}
 
 ota:
   - platform: esphome
@@ -49,20 +59,27 @@ wifi:
     ap_timeout: 15s
 
 captive_portal:
-improv_serial:                       # Wi-Fi impostabile anche da web.esphome.io via USB
+improv_serial:
 
-# ---------- Stato interno ----------
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      - script.execute: update_clock
+
+# ---------------------------------------------------------------- stato
 globals:
-  - id: show_qr
-    type: bool
-    initial_value: "false"
+  - { id: g_page, type: int, restore_value: true, initial_value: "0" }   # pagina attiva 0/1
+  - { id: g_row, type: int, initial_value: "0" }                         # riga mostrata 0 = tasti 1-3, 1 = 4-6
+  - { id: g_last, type: int, initial_value: "-1" }                       # ultimo tasto usato (0-5)
+  - { id: g_ui, type: int, initial_value: "0" }                          # 0 home, 1 manopola, 2 QR, 3 setup
+  - { id: g_fb, type: int, initial_value: "-1" }                         # tasto in feedback, -1 nessuno
+  - { id: g_knob, type: int, initial_value: "0" }                        # luminosità mostrata
+  - { id: g_data0, type: std::string, initial_value: '""' }
+  - { id: g_data1, type: std::string, initial_value: '""' }
+  - { id: g_names, type: std::string, initial_value: '"Pagina 1|Pagina 2"' }
 
-qr_code:
-  - id: qr_config
-    value: "http://homeassistant.local:8123/macroboard"
-    ecc: LOW
-
-# ---------- Valori che arrivano dall'integrazione HA ----------
+# -------------------------------------------- valori che invia l'integrazione HA
 text:
   - platform: template
     id: config_url
@@ -74,13 +91,45 @@ text:
     initial_value: "http://homeassistant.local:8123/macroboard"
     entity_category: config
     on_value:
-      - lambda: id(qr_config).set_value(x);
-  - { platform: template, id: label_1, name: "Etichetta 1", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
-  - { platform: template, id: label_2, name: "Etichetta 2", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
-  - { platform: template, id: label_3, name: "Etichetta 3", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
-  - { platform: template, id: label_4, name: "Etichetta 4", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
-  - { platform: template, id: label_5, name: "Etichetta 5", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
-  - { platform: template, id: label_6, name: "Etichetta 6", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
+      - lvgl.qrcode.update:
+          id: qr
+          text: !lambda return x;
+  - platform: template
+    id: data_p1
+    name: "Dati pagina 1"
+    mode: text
+    max_length: 255
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: diagnostic
+    on_value:
+      - lambda: id(g_data0) = x;
+      - script.execute: refresh_home
+  - platform: template
+    id: data_p2
+    name: "Dati pagina 2"
+    mode: text
+    max_length: 255
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: diagnostic
+    on_value:
+      - lambda: id(g_data1) = x;
+      - script.execute: refresh_home
+  - platform: template
+    id: page_names
+    name: "Nomi pagine"
+    mode: text
+    max_length: 60
+    optimistic: true
+    restore_value: true
+    initial_value: "Pagina 1|Pagina 2"
+    entity_category: diagnostic
+    on_value:
+      - lambda: id(g_names) = x;
+      - script.execute: refresh_home
 
 number:
   - platform: template
@@ -94,19 +143,276 @@ number:
     optimistic: true
     restore_value: true
     entity_category: config
+  - platform: template
+    name: "Numero tasti"
+    id: num_keys
+    min_value: 3
+    max_value: 6
+    step: 3
+    initial_value: 3
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    on_value:
+      - lambda: if (x < 6) id(g_row) = 0;
+      - script.execute: refresh_home
 
+sensor:
+  - platform: template
+    name: "Pagina attiva"
+    id: page_sensor
+    accuracy_decimals: 0
+    update_interval: never
+    entity_category: diagnostic
+
+  - platform: rotary_encoder
+    name: "Manopola"
+    id: knob
+    pin_a:
+      number: GPIO17
+      mode: { input: true, pullup: true }
+    pin_b:
+      number: GPIO18
+      mode: { input: true, pullup: true }
+    on_clockwise:
+      - script.execute: { id: knob_step, delta: 5 }
+    on_anticlockwise:
+      - script.execute: { id: knob_step, delta: -5 }
+
+# ---------------------------------------------------------------- script UI
 script:
+  # Accende display e LED, li spegne (sfumando) dopo il timeout
   - id: wake
     mode: restart
     then:
-      - light.turn_on: backlight
+      - light.turn_on: { id: backlight, brightness: 100%, transition_length: 200ms }
       - light.turn_on: led_strip
       - delay: !lambda return id(timeout_s).state * 1000;
-      - light.turn_off: backlight
-      - light.turn_off: led_strip
-      - lambda: id(show_qr) = false;
+      - if:
+          condition:
+            lambda: return id(g_ui) != 3;   # in configurazione resta acceso
+          then:
+            - light.turn_off: { id: backlight, transition_length: 1s }
+            - light.turn_off: led_strip
+            - delay: 1s
+            - script.execute: go_home
 
-# ---------- Display GC9A01 ----------
+  - id: go_home
+    then:
+      - lambda: id(g_ui) = 0;
+      - lvgl.page.show: { id: page_home, animation: FADE_IN, time: 250ms }
+      - script.execute: refresh_home
+
+  # Ridisegna nomi e segmenti della home
+  - id: refresh_home
+    mode: queued
+    max_runs: 3
+    then:
+      - lvgl.label.update:
+          id: lbl_page
+          text: !lambda |-
+            return mb_page_name(id(g_names), id(g_page)) +
+                   (id(num_keys).state >= 6 ? (id(g_row) == 0 ? "  ·  1-3" : "  ·  4-6") : "");
+      - lvgl.label.update:
+          id: lbl_k1
+          text: !lambda |-
+            auto k = mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_row) * 3 + 0);
+            return k.empty() ? std::string("-") : k.name;
+      - lvgl.label.update:
+          id: lbl_k2
+          text: !lambda |-
+            auto k = mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_row) * 3 + 1);
+            return k.empty() ? std::string("-") : k.name;
+      - lvgl.label.update:
+          id: lbl_k3
+          text: !lambda |-
+            auto k = mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_row) * 3 + 2);
+            return k.empty() ? std::string("-") : k.name;
+      - lvgl.arc.update:
+          id: seg_1
+          value: !lambda 'return mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_row) * 3 + 0).on ? 100 : 0;'
+      - lvgl.arc.update:
+          id: seg_2
+          value: !lambda 'return mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_row) * 3 + 1).on ? 100 : 0;'
+      - lvgl.arc.update:
+          id: seg_3
+          value: !lambda 'return mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_row) * 3 + 2).on ? 100 : 0;'
+      - lvgl.label.update:
+          id: lbl_status
+          text: !lambda |-
+            const std::string &d = id(g_page) ? id(g_data1) : id(g_data0);
+            int n = (int) id(num_keys).state, on = 0;
+            for (int i = 0; i < n; i++) if (mb_key(d, i).on) on++;
+            if (on == 0) return std::string("tutto spento");
+            return std::to_string(on) + (on == 1 ? " acceso" : " accesi");
+      - if:
+          condition:
+            lambda: return id(g_fb) >= 0;
+          then:
+            - lvgl.label.update:
+                id: lbl_fb_state
+                text: !lambda 'return mb_state_text(mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_fb)));'
+
+  # Feedback alla pressione di un tasto: nome grande + stato, segmento che pulsa
+  - id: key_feedback
+    mode: restart
+    parameters:
+      idx: int
+    then:
+      - lambda: |-
+          id(g_last) = idx;
+          id(g_fb) = idx;
+          if (id(num_keys).state >= 6) id(g_row) = idx / 3;
+      - if:
+          condition:
+            lambda: return id(g_ui) != 0;
+          then:
+            - lambda: id(g_ui) = 0;
+            - lvgl.page.show: { id: page_home, animation: FADE_IN, time: 150ms }
+      - script.execute: refresh_home
+      - lvgl.label.update:
+          id: lbl_fb_name
+          text: !lambda |-
+            auto k = mb_key(id(g_page) ? id(g_data1) : id(g_data0), idx);
+            return k.empty() ? std::string("Tasto ") + std::to_string(idx + 1) : k.name;
+      - lvgl.label.update:
+          id: lbl_fb_state
+          text: !lambda |-
+            auto k = mb_key(id(g_page) ? id(g_data1) : id(g_data0), idx);
+            if (k.type == 't') k.on = !k.on;      // previsione, poi la corregge HA
+            return mb_state_text(k);
+      - lvgl.widget.hide: [lbl_time, lbl_date, lbl_status]
+      - lvgl.widget.show: [lbl_fb_name, lbl_fb_state]
+      - lvgl.animation.start: anim_fb_in
+      - if:
+          condition:
+            lambda: return idx % 3 == 0;
+          then:
+            - lvgl.animation.start: anim_pulse_1
+      - if:
+          condition:
+            lambda: return idx % 3 == 1;
+          then:
+            - lvgl.animation.start: anim_pulse_2
+      - if:
+          condition:
+            lambda: return idx % 3 == 2;
+          then:
+            - lvgl.animation.start: anim_pulse_3
+      - delay: 1800ms
+      - lambda: id(g_fb) = -1;
+      - lvgl.widget.hide: [lbl_fb_name, lbl_fb_state]
+      - lvgl.widget.show: [lbl_time, lbl_date, lbl_status]
+      - lvgl.animation.start: anim_home_in
+
+  # Manopola: arco di luminosità
+  - id: knob_step
+    mode: queued
+    max_runs: 10
+    parameters:
+      delta: int
+    then:
+      - script.execute: wake
+      - lambda: |-
+          const std::string &d = id(g_page) ? id(g_data1) : id(g_data0);
+          if (id(g_last) < 0) {
+            for (int i = 0; i < (int) id(num_keys).state; i++)
+              if (mb_key(d, i).bri >= 0) { id(g_last) = i; break; }
+          }
+          if (id(g_ui) != 1) {
+            auto k = mb_key(d, id(g_last));
+            id(g_knob) = k.on ? (k.bri < 0 ? 100 : k.bri) : 0;
+          }
+          id(g_knob) = std::max(0, std::min(100, id(g_knob) + delta));
+      - if:
+          condition:
+            lambda: return id(g_ui) != 1;
+          then:
+            - lambda: id(g_ui) = 1;
+            - lvgl.page.show: { id: page_knob, animation: FADE_IN, time: 150ms }
+      - lvgl.arc.update:
+          id: knob_arc
+          value: !lambda return id(g_knob);
+      - lvgl.label.update:
+          id: lbl_kn_val
+          text: !lambda |-
+            auto k = mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_last));
+            if (k.empty() || k.bri < 0) return std::string("-");
+            return std::to_string(id(g_knob)) + "%";
+      - lvgl.label.update:
+          id: lbl_kn_name
+          text: !lambda |-
+            auto k = mb_key(id(g_page) ? id(g_data1) : id(g_data0), id(g_last));
+            if (k.empty()) return std::string("Nessuna luce");
+            return k.bri < 0 ? k.name + " (non regolabile)" : k.name;
+      - script.execute: knob_back
+
+  - id: knob_back
+    mode: restart
+    then:
+      - delay: 1500ms
+      - if:
+          condition:
+            lambda: return id(g_ui) == 1;
+          then:
+            - script.execute: go_home
+
+  # Clic breve sulla manopola: cambia pagina
+  - id: switch_page
+    then:
+      - lambda: |-
+          id(g_page) = id(g_page) ? 0 : 1;
+          id(page_sensor).publish_state(id(g_page) + 1);
+          id(g_last) = -1;
+      - if:
+          condition:
+            lambda: return id(g_ui) != 0;
+          then:
+            - lambda: id(g_ui) = 0;
+      - lvgl.page.show: { id: page_home, animation: MOVE_LEFT, time: 300ms }
+      - script.execute: refresh_home
+      - lvgl.label.update:
+          id: lbl_fb_name
+          text: !lambda return mb_page_name(id(g_names), id(g_page));
+      - lvgl.label.update:
+          id: lbl_fb_state
+          text: !lambda 'return std::string("pagina ") + std::to_string(id(g_page) + 1) + " di 2";'
+      - lvgl.widget.hide: [lbl_time, lbl_date, lbl_status]
+      - lvgl.widget.show: [lbl_fb_name, lbl_fb_state]
+      - lvgl.animation.start: anim_fb_in
+      - delay: 1200ms
+      - lvgl.widget.hide: [lbl_fb_name, lbl_fb_state]
+      - lvgl.widget.show: [lbl_time, lbl_date, lbl_status]
+      - lvgl.animation.start: anim_home_in
+
+  - id: update_clock
+    then:
+      - lvgl.label.update:
+          id: lbl_time
+          text: !lambda |-
+            auto t = id(ha_time).now();
+            if (!t.is_valid()) return std::string("--:--");
+            char b[8]; snprintf(b, sizeof(b), "%02d:%02d", t.hour, t.minute);
+            return std::string(b);
+      - lvgl.label.update:
+          id: lbl_date
+          text: !lambda |-
+            auto t = id(ha_time).now();
+            if (!t.is_valid()) return std::string("");
+            return std::string(MB_GIORNI[t.day_of_week - 1]) + " " + std::to_string(t.day_of_month) + " " + MB_MESI[t.month - 1];
+
+  - id: toggle_qr
+    then:
+      - if:
+          condition:
+            lambda: return id(g_ui) == 2;
+          then:
+            - script.execute: go_home
+          else:
+            - lambda: id(g_ui) = 2;
+            - lvgl.page.show: { id: page_qr, animation: FADE_IN, time: 250ms }
+
+# ---------------------------------------------------------------- display
 spi:
   clk_pin: GPIO12
   mosi_pin: GPIO11
@@ -116,74 +422,350 @@ output:
     pin: GPIO13
     id: backlight_pwm
 
-font:
-  - file: "gfonts://Roboto@700"
-    id: font_title
-    size: 24
-  - file: "gfonts://Roboto"
-    id: font_small
-    size: 17
-
-color:
-  - { id: c_white, hex: "FFFFFF" }
-  - { id: c_grey,  hex: "9AA5B1" }
-  - { id: c_amber, hex: "F5B544" }
-  - { id: c_black, hex: "000000" }
-
 display:
   - platform: mipi_spi
+    id: main_display
     model: GC9A01A
     cs_pin: GPIO10
     dc_pin: GPIO9
     reset_pin: GPIO14
-    update_interval: 500ms
-    lambda: |-
-      // QR di configurazione (pressione lunga sulla manopola)
-      if (id(show_qr)) {
-        it.fill(id(c_white));
-        int sz = id(qr_config).get_size();
-        int scale = sz > 0 ? 165 / sz : 4;
-        int off = (240 - sz * scale) / 2;
-        it.qr_code(off, off, id(qr_config), id(c_black), scale);
-        return;
-      }
+    rotation: ${display_rotation}
+    auto_clear_enabled: false
+    update_interval: never
 
-      bool wifi_ok = wifi::global_wifi_component->is_connected();
-      bool ha_ok = api::global_api_server->is_connected();
+font:
+  - { file: "gfonts://Roboto@500", id: f_time, size: 52, glyphs: "0123456789:-" }
+  - { file: "gfonts://Roboto@500", id: f_big, size: 26 }
+  - { file: "gfonts://Roboto@500", id: f_val, size: 50, glyphs: "0123456789%-" }
+  - { file: "gfonts://Roboto", id: f_txt, size: 16 }
+  - { file: "gfonts://Roboto", id: f_small, size: 14 }
 
-      if (!wifi_ok) {
-        it.print(120, 80, id(font_title), id(c_amber), TextAlign::CENTER, "Wi-Fi");
-        it.print(120, 115, id(font_small), id(c_white), TextAlign::CENTER, "Col telefono collegati a");
-        it.print(120, 140, id(font_small), id(c_white), TextAlign::CENTER, "\"Macroboard Setup\"");
-        return;
-      }
-      if (!ha_ok) {
-        it.print(120, 80, id(font_title), id(c_amber), TextAlign::CENTER, "Home Assistant");
-        it.print(120, 115, id(font_small), id(c_white), TextAlign::CENTER, "Apri Home Assistant");
-        it.print(120, 140, id(font_small), id(c_white), TextAlign::CENTER, "e premi Configura");
-        return;
-      }
+lvgl:
+  displays: [main_display]
+  buffer_size: 25%
+  default_font: f_txt
+  bg_color: 0x000000
+  text_color: 0xF1EFE8
 
-      // Etichette dei tasti (nomi delle luci scelte)
-      std::string l[6] = { id(label_1).state, id(label_2).state, id(label_3).state,
-                           id(label_4).state, id(label_5).state, id(label_6).state };
-      int used = 0;
-      for (int i = 0; i < 6; i++) if (!l[i].empty()) used++;
-      if (used == 0) {
-        it.print(120, 95, id(font_title), id(c_white), TextAlign::CENTER, "Macroboard");
-        it.print(120, 130, id(font_small), id(c_grey), TextAlign::CENTER, "Tieni premuta la manopola");
-        it.print(120, 152, id(font_small), id(c_grey), TextAlign::CENTER, "per assegnare le luci");
-        return;
-      }
-      int y = 120 - (6 * 26) / 2 + 13;
-      for (int i = 0; i < 6; i++) {
-        if (l[i].empty()) { y += 26; continue; }
-        it.printf(48, y, id(font_small), id(c_amber), TextAlign::CENTER_LEFT, "%d", i + 1);
-        it.printf(70, y, id(font_small), id(c_white), TextAlign::CENTER_LEFT, "%.16s", l[i].c_str());
-        y += 26;
-      }
+  style_definitions:
+    - id: st_seg
+      arc_width: 9
+      arc_color: 0x2C2C2A
+      arc_rounded: true
+      bg_opa: TRANSP
+      border_width: 0
+      pad_all: 0
 
-# ---------- Luci della board ----------
+  animations:
+    - id: anim_fb_in
+      duration: 280ms
+      timing: ease_out
+      widgets:
+        - id: lbl_fb_name
+          opa: { from: 0%, to: 100% }
+          translate_y: { from: 14, to: 0 }
+        - id: lbl_fb_state
+          opa: { from: 0%, to: 100% }
+          translate_y: { from: 20, to: 0 }
+    - id: anim_home_in
+      duration: 300ms
+      timing: ease_out
+      widgets:
+        - id: lbl_time
+          opa: { from: 0%, to: 100% }
+        - id: lbl_date
+          opa: { from: 0%, to: 100% }
+        - id: lbl_status
+          opa: { from: 0%, to: 100% }
+    - id: anim_pulse_1
+      duration: 500ms
+      timing: ease_out
+      widgets:
+        - id: seg_1
+          opa: { from: 20%, to: 100% }
+        - id: lbl_k1
+          opa: { from: 20%, to: 100% }
+    - id: anim_pulse_2
+      duration: 500ms
+      timing: ease_out
+      widgets:
+        - id: seg_2
+          opa: { from: 20%, to: 100% }
+        - id: lbl_k2
+          opa: { from: 20%, to: 100% }
+    - id: anim_pulse_3
+      duration: 500ms
+      timing: ease_out
+      widgets:
+        - id: seg_3
+          opa: { from: 20%, to: 100% }
+        - id: lbl_k3
+          opa: { from: 20%, to: 100% }
+
+  pages:
+    # ---------------- HOME: ora, data, nomi dei tasti sopra ai segmenti
+    - id: page_home
+      bg_color: 0x000000
+      widgets:
+        - label:
+            id: lbl_page
+            align: CENTER
+            y: -74
+            width: 170
+            text_align: CENTER
+            long_mode: DOT
+            text_font: f_small
+            text_color: 0xEF9F27
+            text: "Pagina 1"
+        - label:
+            id: lbl_time
+            align: CENTER
+            y: -30
+            text_font: f_time
+            text: "--:--"
+        - label:
+            id: lbl_date
+            align: CENTER
+            y: 10
+            text_font: f_small
+            text_color: 0x888780
+            text: ""
+        - label:
+            id: lbl_status
+            align: CENTER
+            y: 32
+            text_font: f_small
+            text_color: 0xEF9F27
+            text: ""
+        - label:
+            id: lbl_fb_name
+            align: CENTER
+            y: -24
+            width: 190
+            text_align: CENTER
+            long_mode: DOT
+            text_font: f_big
+            text: ""
+            hidden: true
+        - label:
+            id: lbl_fb_state
+            align: CENTER
+            y: 12
+            text_font: f_txt
+            text_color: 0xEF9F27
+            text: ""
+            hidden: true
+        # segmenti in basso, uno per tasto (sinistra, centro, destra)
+        - arc:
+            id: seg_1
+            styles: st_seg
+            align: CENTER
+            width: 230
+            height: 230
+            start_angle: 113
+            end_angle: 143
+            value: 0
+            adjustable: false
+            clickable: false
+            indicator: { arc_color: 0xEF9F27, arc_width: 9, arc_rounded: true }
+            knob: { bg_opa: TRANSP, pad_all: 0 }
+        - arc:
+            id: seg_2
+            styles: st_seg
+            align: CENTER
+            width: 230
+            height: 230
+            start_angle: 75
+            end_angle: 105
+            value: 0
+            adjustable: false
+            clickable: false
+            indicator: { arc_color: 0xEF9F27, arc_width: 9, arc_rounded: true }
+            knob: { bg_opa: TRANSP, pad_all: 0 }
+        - arc:
+            id: seg_3
+            styles: st_seg
+            align: CENTER
+            width: 230
+            height: 230
+            start_angle: 37
+            end_angle: 67
+            value: 0
+            adjustable: false
+            clickable: false
+            indicator: { arc_color: 0xEF9F27, arc_width: 9, arc_rounded: true }
+            knob: { bg_opa: TRANSP, pad_all: 0 }
+        # nomi sopra ai segmenti
+        - label:
+            id: lbl_k1
+            align: CENTER
+            x: -54
+            y: 58
+            width: 72
+            text_align: CENTER
+            long_mode: DOT
+            text_font: f_small
+            text_color: 0xD3D1C7
+            text: "-"
+        - label:
+            id: lbl_k2
+            align: CENTER
+            x: 0
+            y: 80
+            width: 80
+            text_align: CENTER
+            long_mode: DOT
+            text_font: f_small
+            text_color: 0xD3D1C7
+            text: "-"
+        - label:
+            id: lbl_k3
+            align: CENTER
+            x: 54
+            y: 58
+            width: 72
+            text_align: CENTER
+            long_mode: DOT
+            text_font: f_small
+            text_color: 0xD3D1C7
+            text: "-"
+
+    # ---------------- MANOPOLA: arco di luminosità
+    - id: page_knob
+      bg_color: 0x000000
+      widgets:
+        - arc:
+            id: knob_arc
+            align: CENTER
+            width: 222
+            height: 222
+            start_angle: 135
+            end_angle: 45
+            min_value: 0
+            max_value: 100
+            value: 0
+            adjustable: false
+            clickable: false
+            arc_width: 14
+            arc_color: 0x2C2C2A
+            arc_rounded: true
+            bg_opa: TRANSP
+            border_width: 0
+            indicator: { arc_color: 0xFAC775, arc_width: 14, arc_rounded: true }
+            knob: { bg_opa: TRANSP, pad_all: 0 }
+        - label:
+            id: lbl_kn_val
+            align: CENTER
+            y: -10
+            text_font: f_val
+            text: "-"
+        - label:
+            id: lbl_kn_name
+            align: CENTER
+            y: 34
+            width: 160
+            text_align: CENTER
+            long_mode: DOT
+            text_font: f_small
+            text_color: 0x888780
+            text: ""
+
+    # ---------------- QR per assegnare i tasti
+    - id: page_qr
+      bg_color: 0xFFFFFF
+      widgets:
+        - qrcode:
+            id: qr
+            align: CENTER
+            y: -12
+            size: 150
+            light_color: 0xFFFFFF
+            dark_color: 0x000000
+            text: "http://homeassistant.local:8123/macroboard"
+        - label:
+            align: CENTER
+            y: 82
+            width: 150
+            text_align: CENTER
+            long_mode: WRAP
+            text_font: f_small
+            text_color: 0x2C2C2A
+            text: "Inquadra per assegnare i tasti"
+
+    # ---------------- CONFIGURAZIONE (Wi-Fi / Home Assistant)
+    - id: page_setup
+      bg_color: 0x000000
+      widgets:
+        - spinner:
+            id: spin
+            align: CENTER
+            width: 228
+            height: 228
+            spin_time: 1500ms
+            arc_length: 70deg
+            arc_opa: TRANSP
+            bg_opa: TRANSP
+            indicator: { arc_color: 0x378ADD, arc_width: 8, arc_rounded: true }
+        - label:
+            id: lbl_set_title
+            align: CENTER
+            y: -20
+            text_font: f_big
+            text_color: 0x85B7EB
+            text: "Wi-Fi"
+        - label:
+            id: lbl_set_hint
+            align: CENTER
+            y: 22
+            width: 170
+            text_align: CENTER
+            long_mode: WRAP
+            text_font: f_small
+            text_color: 0xD3D1C7
+            text: "Col telefono collegati a \"Macroboard Setup\""
+
+# ---------------------------------------------------------------- aggiornamenti periodici
+interval:
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            not: wifi.connected
+          then:
+            - lvgl.label.update: { id: lbl_set_title, text: "Wi-Fi" }
+            - lvgl.label.update: { id: lbl_set_hint, text: "Col telefono collegati a \"Macroboard Setup\"" }
+            - if:
+                condition:
+                  lambda: return id(g_ui) != 3;
+                then:
+                  - lambda: id(g_ui) = 3;
+                  - lvgl.page.show: { id: page_setup, animation: FADE_IN, time: 300ms }
+            - light.turn_on: backlight
+          else:
+            - if:
+                condition:
+                  not: api.connected
+                then:
+                  - lvgl.label.update: { id: lbl_set_title, text: "Home Assistant" }
+                  - lvgl.label.update: { id: lbl_set_hint, text: "Apri Home Assistant e premi Configura" }
+                  - if:
+                      condition:
+                        lambda: return id(g_ui) != 3;
+                      then:
+                        - lambda: id(g_ui) = 3;
+                        - lvgl.page.show: { id: page_setup, animation: FADE_IN, time: 300ms }
+                  - light.turn_on: backlight
+                else:
+                  - if:
+                      condition:
+                        lambda: return id(g_ui) == 3;
+                      then:
+                        - script.execute: go_home
+  - interval: 10s
+    then:
+      - script.execute: update_clock
+
+# ---------------------------------------------------------------- luci della board
 light:
   - platform: monochromatic
     output: backlight_pwm
@@ -202,71 +784,73 @@ light:
     id: led_strip
     color_correct: [30%, 30%, 30%]
 
-# ---------- Manopola ----------
-sensor:
-  - platform: rotary_encoder
-    name: "Manopola"
-    id: knob
-    pin_a:
-      number: GPIO17
-      mode: { input: true, pullup: true }
-    pin_b:
-      number: GPIO18
-      mode: { input: true, pullup: true }
-    on_value:
-      - script.execute: wake
-
-# ---------- Tasti, pulsante manopola, vibrazione ----------
+# ---------------------------------------------------------------- tasti, manopola, vibrazione
 binary_sensor:
   - platform: gpio
     id: tasto_1
     name: "Tasto 1"
     pin: { number: GPIO4, inverted: true, mode: { input: true, pullup: true } }
     filters: [ delayed_on: 10ms ]
-    on_press: [ script.execute: wake ]
+    on_press:
+      - script.execute: wake
+      - script.execute: { id: key_feedback, idx: 0 }
   - platform: gpio
     id: tasto_2
     name: "Tasto 2"
     pin: { number: GPIO5, inverted: true, mode: { input: true, pullup: true } }
     filters: [ delayed_on: 10ms ]
-    on_press: [ script.execute: wake ]
+    on_press:
+      - script.execute: wake
+      - script.execute: { id: key_feedback, idx: 1 }
   - platform: gpio
     id: tasto_3
     name: "Tasto 3"
     pin: { number: GPIO6, inverted: true, mode: { input: true, pullup: true } }
     filters: [ delayed_on: 10ms ]
-    on_press: [ script.execute: wake ]
+    on_press:
+      - script.execute: wake
+      - script.execute: { id: key_feedback, idx: 2 }
   - platform: gpio
     id: tasto_4
     name: "Tasto 4"
     pin: { number: GPIO7, inverted: true, mode: { input: true, pullup: true } }
     filters: [ delayed_on: 10ms ]
-    on_press: [ script.execute: wake ]
+    on_press:
+      - script.execute: wake
+      - script.execute: { id: key_feedback, idx: 3 }
   - platform: gpio
     id: tasto_5
     name: "Tasto 5"
     pin: { number: GPIO15, inverted: true, mode: { input: true, pullup: true } }
     filters: [ delayed_on: 10ms ]
-    on_press: [ script.execute: wake ]
+    on_press:
+      - script.execute: wake
+      - script.execute: { id: key_feedback, idx: 4 }
   - platform: gpio
     id: tasto_6
     name: "Tasto 6"
     pin: { number: GPIO16, inverted: true, mode: { input: true, pullup: true } }
     filters: [ delayed_on: 10ms ]
-    on_press: [ script.execute: wake ]
+    on_press:
+      - script.execute: wake
+      - script.execute: { id: key_feedback, idx: 5 }
 
   - platform: gpio
     id: pulsante_manopola
     name: "Pulsante manopola"
     pin: { number: GPIO8, inverted: true, mode: { input: true, pullup: true } }
     filters: [ delayed_on: 10ms ]
-    on_press: [ script.execute: wake ]
+    on_press:
+      - script.execute: wake
     on_click:
+      - min_length: 30ms
+        max_length: 600ms
+        then:
+          - script.execute: switch_page
       - min_length: 800ms
         max_length: 5s
         then:
-          - lambda: id(show_qr) = !id(show_qr);
-          - script.execute: wake
+          - script.execute: toggle_qr
 
   - platform: gpio
     id: vibrazione
