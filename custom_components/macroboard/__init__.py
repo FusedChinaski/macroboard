@@ -106,6 +106,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: MacroboardConfigEntry) -
 async def async_unload_entry(hass: HomeAssistant, entry: MacroboardConfigEntry) -> bool:
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
-        await entry.runtime_data.async_unload()
-        frontend.async_remove_panel(hass, PANEL_URL)
+        try:
+            await entry.runtime_data.async_unload()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Macroboard: errore in chiusura")
+        try:
+            frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Pannello già rimosso")
     return ok
