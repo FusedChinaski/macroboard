@@ -103,7 +103,11 @@ class MacroboardManager:
             boards[device_id] = board
         self.boards = boards
         self._light_cache = None
-        _LOGGER.debug("Macroboard trovate: %s", list(boards))
+        for b in boards.values():
+            _LOGGER.info("Macroboard trovata: %s | tasti=%s manopola=%s pulsante=%s qr=%s",
+                         b.name, b.keys, b.knob, b.knob_btn, b.config_text)
+        if not boards:
+            _LOGGER.info("Nessuna Macroboard trovata")
 
     def _subscribe(self) -> None:
         for unsub in self._unsubs:
@@ -114,6 +118,7 @@ class MacroboardManager:
             watched += list(b.keys.values())
             watched += [x for x in (b.knob, b.knob_btn, b.config_text) if x]
             watched += list(b.labels.values())
+        _LOGGER.info("Macroboard: in ascolto su %d entità", len(watched))
         if watched:
             self._unsubs.append(
                 async_track_state_change_event(self.hass, watched, self._on_board_event)
@@ -194,6 +199,7 @@ class MacroboardManager:
         old, new = event.data.get("old_state"), event.data.get("new_state")
         if new is None:
             return
+        _LOGGER.info("Macroboard evento: %s %s -> %s", eid, old.state if old else None, new.state)
         for board in self.boards.values():
             # la board è tornata online: rimanda indirizzo QR ed etichette
             if eid in (board.config_text, *board.labels.values()):
@@ -214,10 +220,14 @@ class MacroboardManager:
 
     async def _press_key(self, board: Board, n: int) -> None:
         light = self.get_assignment(board.device_id, n)
+        _LOGGER.info("Macroboard %s: tasto %s -> %s", board.name, n, light)
         if not light:
             return
         board.last_light = light
-        await self.hass.services.async_call("light", "toggle", {"entity_id": light})
+        try:
+            await self.hass.services.async_call("light", "toggle", {"entity_id": light}, blocking=True)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Macroboard: impossibile commutare %s", light)
 
     def _target(self, board: Board) -> str | None:
         if board.last_light:
