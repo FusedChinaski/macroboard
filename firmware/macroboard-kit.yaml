@@ -1,0 +1,277 @@
+# =====================================================================
+#  MACROBOARD – firmware universale (uguale per tutte le board)
+#  ESP32-S3-DevKitC-1 N16R8 · 3 o 6 tasti MX · EC11 · GC9A01 · SW-420
+#
+#  Niente Wi-Fi, chiavi o indirizzi qui dentro:
+#   - Wi-Fi  -> rete "Macroboard Setup" dal telefono (o web.esphome.io)
+#   - chiave -> la imposta Home Assistant al primo "Configura"
+#   - QR, etichette tasti -> li invia l'integrazione Macroboard di HA
+# =====================================================================
+
+substitutions:
+  name: macroboard
+  friendly_name: Macroboard
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: true          # ogni board ha un nome unico: macroboard-a1b2c3
+  project:
+    name: ivan.macroboard
+    version: "1.0.0"
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: wake
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+
+api:
+  encryption: {}                     # senza chiave: la imposta Home Assistant al primo collegamento
+
+ota:
+  - platform: esphome
+
+wifi:
+  ap:
+    ssid: "Macroboard Setup"
+    ap_timeout: 15s
+
+captive_portal:
+improv_serial:                       # Wi-Fi impostabile anche da web.esphome.io via USB
+
+# ---------- Stato interno ----------
+globals:
+  - id: show_qr
+    type: bool
+    initial_value: "false"
+
+qr_code:
+  - id: qr_config
+    value: "http://homeassistant.local:8123/macroboard"
+    ecc: LOW
+
+# ---------- Valori che arrivano dall'integrazione HA ----------
+text:
+  - platform: template
+    id: config_url
+    name: "Indirizzo configurazione"
+    mode: text
+    max_length: 200
+    optimistic: true
+    restore_value: true
+    initial_value: "http://homeassistant.local:8123/macroboard"
+    entity_category: config
+    on_value:
+      - lambda: id(qr_config).set_value(x);
+  - { platform: template, id: label_1, name: "Etichetta 1", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
+  - { platform: template, id: label_2, name: "Etichetta 2", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
+  - { platform: template, id: label_3, name: "Etichetta 3", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
+  - { platform: template, id: label_4, name: "Etichetta 4", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
+  - { platform: template, id: label_5, name: "Etichetta 5", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
+  - { platform: template, id: label_6, name: "Etichetta 6", mode: text, max_length: 24, optimistic: true, restore_value: true, initial_value: "", entity_category: config }
+
+number:
+  - platform: template
+    name: "Timeout luci"
+    id: timeout_s
+    min_value: 3
+    max_value: 120
+    step: 1
+    initial_value: 10
+    unit_of_measurement: s
+    optimistic: true
+    restore_value: true
+    entity_category: config
+
+script:
+  - id: wake
+    mode: restart
+    then:
+      - light.turn_on: backlight
+      - light.turn_on: led_strip
+      - delay: !lambda return id(timeout_s).state * 1000;
+      - light.turn_off: backlight
+      - light.turn_off: led_strip
+      - lambda: id(show_qr) = false;
+
+# ---------- Display GC9A01 ----------
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+output:
+  - platform: ledc
+    pin: GPIO13
+    id: backlight_pwm
+
+font:
+  - file: "gfonts://Roboto@700"
+    id: font_title
+    size: 24
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 17
+
+color:
+  - { id: c_white, hex: "FFFFFF" }
+  - { id: c_grey,  hex: "9AA5B1" }
+  - { id: c_amber, hex: "F5B544" }
+  - { id: c_black, hex: "000000" }
+
+display:
+  - platform: mipi_spi
+    model: GC9A01A
+    cs_pin: GPIO10
+    dc_pin: GPIO9
+    reset_pin: GPIO14
+    update_interval: 500ms
+    lambda: |-
+      // QR di configurazione (pressione lunga sulla manopola)
+      if (id(show_qr)) {
+        it.fill(id(c_white));
+        int sz = id(qr_config).get_size();
+        int scale = sz > 0 ? 165 / sz : 4;
+        int off = (240 - sz * scale) / 2;
+        it.qr_code(off, off, id(qr_config), id(c_black), scale);
+        return;
+      }
+
+      bool wifi_ok = wifi::global_wifi_component->is_connected();
+      bool ha_ok = api::global_api_server->is_connected();
+
+      if (!wifi_ok) {
+        it.print(120, 80, id(font_title), id(c_amber), TextAlign::CENTER, "Wi-Fi");
+        it.print(120, 115, id(font_small), id(c_white), TextAlign::CENTER, "Col telefono collegati a");
+        it.print(120, 140, id(font_small), id(c_white), TextAlign::CENTER, "\"Macroboard Setup\"");
+        return;
+      }
+      if (!ha_ok) {
+        it.print(120, 80, id(font_title), id(c_amber), TextAlign::CENTER, "Home Assistant");
+        it.print(120, 115, id(font_small), id(c_white), TextAlign::CENTER, "Apri Home Assistant");
+        it.print(120, 140, id(font_small), id(c_white), TextAlign::CENTER, "e premi Configura");
+        return;
+      }
+
+      // Etichette dei tasti (nomi delle luci scelte)
+      std::string l[6] = { id(label_1).state, id(label_2).state, id(label_3).state,
+                           id(label_4).state, id(label_5).state, id(label_6).state };
+      int used = 0;
+      for (int i = 0; i < 6; i++) if (!l[i].empty()) used++;
+      if (used == 0) {
+        it.print(120, 95, id(font_title), id(c_white), TextAlign::CENTER, "Macroboard");
+        it.print(120, 130, id(font_small), id(c_grey), TextAlign::CENTER, "Tieni premuta la manopola");
+        it.print(120, 152, id(font_small), id(c_grey), TextAlign::CENTER, "per assegnare le luci");
+        return;
+      }
+      int y = 120 - (6 * 26) / 2 + 13;
+      for (int i = 0; i < 6; i++) {
+        if (l[i].empty()) { y += 26; continue; }
+        it.printf(48, y, id(font_small), id(c_amber), TextAlign::CENTER_LEFT, "%d", i + 1);
+        it.printf(70, y, id(font_small), id(c_white), TextAlign::CENTER_LEFT, "%.16s", l[i].c_str());
+        y += 26;
+      }
+
+# ---------- Luci della board ----------
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Retroilluminazione"
+    id: backlight
+    restore_mode: ALWAYS_ON
+    default_transition_length: 300ms
+    entity_category: config
+
+  - platform: esp32_rmt_led_strip
+    chipset: ws2812
+    channel_colors: GRB
+    pin: GPIO47
+    num_leds: 10
+    name: "Luce Macroboard"
+    id: led_strip
+    color_correct: [30%, 30%, 30%]
+
+# ---------- Manopola ----------
+sensor:
+  - platform: rotary_encoder
+    name: "Manopola"
+    id: knob
+    pin_a:
+      number: GPIO17
+      mode: { input: true, pullup: true }
+    pin_b:
+      number: GPIO18
+      mode: { input: true, pullup: true }
+    on_value:
+      - script.execute: wake
+
+# ---------- Tasti, pulsante manopola, vibrazione ----------
+binary_sensor:
+  - platform: gpio
+    id: tasto_1
+    name: "Tasto 1"
+    pin: { number: GPIO4, inverted: true, mode: { input: true, pullup: true } }
+    filters: [ delayed_on: 10ms ]
+    on_press: [ script.execute: wake ]
+  - platform: gpio
+    id: tasto_2
+    name: "Tasto 2"
+    pin: { number: GPIO5, inverted: true, mode: { input: true, pullup: true } }
+    filters: [ delayed_on: 10ms ]
+    on_press: [ script.execute: wake ]
+  - platform: gpio
+    id: tasto_3
+    name: "Tasto 3"
+    pin: { number: GPIO6, inverted: true, mode: { input: true, pullup: true } }
+    filters: [ delayed_on: 10ms ]
+    on_press: [ script.execute: wake ]
+  - platform: gpio
+    id: tasto_4
+    name: "Tasto 4"
+    pin: { number: GPIO7, inverted: true, mode: { input: true, pullup: true } }
+    filters: [ delayed_on: 10ms ]
+    on_press: [ script.execute: wake ]
+  - platform: gpio
+    id: tasto_5
+    name: "Tasto 5"
+    pin: { number: GPIO15, inverted: true, mode: { input: true, pullup: true } }
+    filters: [ delayed_on: 10ms ]
+    on_press: [ script.execute: wake ]
+  - platform: gpio
+    id: tasto_6
+    name: "Tasto 6"
+    pin: { number: GPIO16, inverted: true, mode: { input: true, pullup: true } }
+    filters: [ delayed_on: 10ms ]
+    on_press: [ script.execute: wake ]
+
+  - platform: gpio
+    id: pulsante_manopola
+    name: "Pulsante manopola"
+    pin: { number: GPIO8, inverted: true, mode: { input: true, pullup: true } }
+    filters: [ delayed_on: 10ms ]
+    on_press: [ script.execute: wake ]
+    on_click:
+      - min_length: 800ms
+        max_length: 5s
+        then:
+          - lambda: id(show_qr) = !id(show_qr);
+          - script.execute: wake
+
+  - platform: gpio
+    id: vibrazione
+    name: "Vibrazione"
+    pin: GPIO21
+    entity_category: diagnostic
+    on_state:
+      - script.execute: wake

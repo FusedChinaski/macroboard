@@ -1,0 +1,11 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Macroboard",
+        "description": "Aggiunge la pagina Macroboard alla barra laterale e collega automaticamente tutte le Macroboard della casa."
+      }
+    },
+    "abort": { "single_instance_allowed": "Macroboard è già configurata." }
+  }
+}
