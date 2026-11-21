@@ -63,7 +63,12 @@ Alla fine il terminale stampa il percorso del file **`...factory.bin`**: è lo s
 1. Collega la board al PC (porta **USB**), apri **web.esphome.io** con Chrome/Edge → **Connect** → **Install** → scegli `firmware.factory.bin`.
 2. Fatto: la board è pronta per il passo 2 qui sopra. Niente Wi-Fi né chiavi dentro.
 
-### Aggiornare board già installate
+### Aggiornamenti automatici
+Ogni modifica a `firmware/` viene compilata da GitHub Actions e pubblicata come **release** (alza `version` in `macroboard-kit.yaml`).
+Le board (firmware ≥ 1.2.0) controllano ogni 6 ore e si aggiornano da sole. In Home Assistant il dispositivo ha anche l'entità **Firmware** con il pulsante **Installa** per aggiornare subito.
+Il file `macroboard-factory.bin` di ogni release serve per programmare board nuove con web.esphome.io, senza compilare.
+
+### Aggiornare board già installate (a mano)
 `py -V:3.13 -m esphome run macroboard-kit.yaml --device <ip-della-board>` oppure dalla scheda ESPHome del dispositivo.
 
 ### Note tecniche
