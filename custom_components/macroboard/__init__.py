@@ -38,7 +38,7 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
             hass,
             frontend_url_path=PANEL_URL,
             webcomponent_name=PANEL_COMPONENT,
-            module_url=f"{STATIC_URL}/macroboard-panel.js?v=1.1.0",
+            module_url=f"{STATIC_URL}/macroboard-panel.js?v=1.2.0",
             sidebar_title="Macroboard",
             sidebar_icon="mdi:gesture-tap-button",
             require_admin=False,

@@ -43,6 +43,9 @@ _RE_KNOB_BTN = _rx("pulsante_manopola")
 _RE_PAGE = _rx("pagina_attiva")
 _RE_NUMKEYS = _rx("numero_tasti")
 _RE_PAGENAMES = _rx("nomi_pagine")
+_RE_ORIENT = _rx("orientamento")                       # select (firmware 1.3)
+_RE_ORIENT_OFF = _rx("correzione_sensore_orientamento")  # number
+_RE_ORIENT_INV = _rx("inverti_sensore_orientamento")     # switch
 
 
 def _match(entry: er.RegistryEntry, regex: re.Pattern) -> re.Match | None:
@@ -68,13 +71,17 @@ class Board:
     page_sensor: str | None = None
     num_keys_entity: str | None = None
     names_text: str | None = None
+    orient_entity: str | None = None
+    orient_offset_entity: str | None = None
+    orient_invert_entity: str | None = None
     last_entity: str | None = None
     status: str = "Nessuna pressione ricevuta da Home Assistant"
 
     def all_entities(self) -> list[str]:
         out = [*self.keys.values(), *self.labels.values(), *self.data.values()]
         out += [x for x in (self.config_text, self.knob, self.knob_btn, self.page_sensor,
-                            self.num_keys_entity, self.names_text) if x]
+                            self.num_keys_entity, self.names_text, self.orient_entity,
+                            self.orient_offset_entity, self.orient_invert_entity) if x]
         return out
 
 
@@ -143,6 +150,12 @@ class MacroboardManager:
                     board.knob = e.entity_id
                 elif e.domain == "number" and _match(e, _RE_NUMKEYS):
                     board.num_keys_entity = e.entity_id
+                elif e.domain == "number" and _match(e, _RE_ORIENT_OFF):
+                    board.orient_offset_entity = e.entity_id
+                elif e.domain == "switch" and _match(e, _RE_ORIENT_INV):
+                    board.orient_invert_entity = e.entity_id
+                elif e.domain == "select" and _match(e, _RE_ORIENT):
+                    board.orient_entity = e.entity_id
                 elif e.domain == "text" and (m := _match(e, _RE_DATA)):
                     board.data[int(m.group(1))] = e.entity_id
                 elif e.domain == "text" and (m := _match(e, _RE_LABEL)):
@@ -319,6 +332,9 @@ class MacroboardManager:
                 board.last_entity = None
                 self._notify()
                 return
+            if eid in (board.orient_entity, board.orient_offset_entity, board.orient_invert_entity):
+                self._notify()
+                return
             for n, key_eid in board.keys.items():
                 if key_eid == eid:
                     if new.state == STATE_ON and (old is None or old.state != STATE_ON):
@@ -444,6 +460,9 @@ class MacroboardManager:
             "macroboard_status": board.status,
             "macroboard_num_keys": self.num_keys(board),
             "macroboard_num_keys_entity": board.num_keys_entity,
+            "macroboard_orient_entity": board.orient_entity,
+            "macroboard_orient_offset_entity": board.orient_offset_entity,
+            "macroboard_orient_invert_entity": board.orient_invert_entity,
             "macroboard_current_page": self.current_page(board),
             "macroboard_page_names": [self.get_page_name(board.device_id, p) for p in range(1, NUM_PAGES + 1)],
         }

@@ -45,6 +45,9 @@ class MacroboardPanel extends HTMLElement {
           status: a.macroboard_status || "",
           numKeys: a.macroboard_num_keys || 6,
           numKeysEntity: a.macroboard_num_keys_entity,
+          orientEntity: a.macroboard_orient_entity,
+          orientOffsetEntity: a.macroboard_orient_offset_entity,
+          orientInvertEntity: a.macroboard_orient_invert_entity,
           currentPage: a.macroboard_current_page || 1,
           pageNames: a.macroboard_page_names || ["Luci", "Pagina 2"],
           pages: {},
@@ -59,9 +62,12 @@ class MacroboardPanel extends HTMLElement {
     return list;
   }
 
+  _st(eid) { return eid ? this._hass.states[eid] : undefined; }
+
   _signature() {
     return (this._focus() || "") + JSON.stringify(this._boards().map((b) => [
       b.id, b.name, b.status, b.numKeys, b.currentPage, b.pageNames,
+      [b.orientEntity, b.orientOffsetEntity, b.orientInvertEntity].map((e) => this._st(e)?.state),
       Object.entries(b.pages).map(([p, ks]) => [p, ks.map((k) => [k.state, k.options.length])]),
     ]));
   }
@@ -101,6 +107,36 @@ class MacroboardPanel extends HTMLElement {
         </div>`;
     };
 
+    const orientBlock = (b) => {
+      const o = this._st(b.orientEntity);
+      if (!o) return "";
+      const off = this._st(b.orientOffsetEntity);
+      const inv = this._st(b.orientInvertEntity);
+      const offVal = off ? Math.round(Number(off.state)) : null;
+      return `
+        <div class="page orient">
+          <div class="page-head"><span class="title">Orientamento display</span></div>
+          <label class="row">
+            <select data-eid="${esc(b.orientEntity)}">
+              ${(o.attributes.options || []).map((v) => `<option ${v === o.state ? "selected" : ""}>${esc(v)}</option>`).join("")}
+            </select>
+          </label>
+          ${off ? `
+            <div class="opt">
+              <span>Correzione sensore</span>
+              <div class="seg" role="group" aria-label="Correzione sensore">
+                ${[0, 90, 180, 270].map((v) => `<button data-num="${esc(b.orientOffsetEntity)}" data-v="${v}" class="${offVal === v ? "on" : ""}">${v}°</button>`).join("")}
+              </div>
+            </div>` : ""}
+          ${inv ? `
+            <label class="opt">
+              <span>Inverti sensore</span>
+              <input type="checkbox" class="sw" data-sw="${esc(b.orientInvertEntity)}" ${inv.state === "on" ? "checked" : ""}>
+            </label>` : ""}
+          <p class="small">Automatico usa l'accelerometro (se montato). Se il display gira dalla parte sbagliata cambia la correzione o inverti il sensore.</p>
+        </div>`;
+    };
+
     const cards = boards.map((b) => `
       <section class="card">
         <div class="card-head">
@@ -113,6 +149,7 @@ class MacroboardPanel extends HTMLElement {
         </div>
         <p class="status">Ultimo evento: ${esc(b.status)}</p>
         ${Object.keys(b.pages).sort().map((p) => pageBlock(b, Number(p))).join("")}
+        ${orientBlock(b)}
       </section>`).join("");
 
     const empty = `
@@ -152,6 +189,10 @@ class MacroboardPanel extends HTMLElement {
                background: var(--primary-color); color: var(--text-primary-color, #fff); }
         select { flex:1; min-width:0; font-size:16px; padding:10px; border-radius:8px; border:1px solid var(--divider-color, #ccc);
                  background: var(--card-background-color, #fff); color: var(--primary-text-color); }
+        .title { font-size:16px; font-weight:500; }
+        .opt { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px 0; font-size:14px; }
+        .sw { width:20px; height:20px; accent-color: var(--primary-color); }
+        .small { font-size:12px; color: var(--secondary-text-color); margin:6px 0 0; line-height:1.4; }
         a { color: var(--primary-color); }
         .err { background:#b00020; color:#fff; padding:10px 12px; border-radius:8px; margin-bottom:12px; }
       </style>
@@ -173,6 +214,10 @@ class MacroboardPanel extends HTMLElement {
       sel.addEventListener("change", (e) => this._call("select", "select_option", { entity_id: sel.dataset.eid, option: e.target.value })));
     root.querySelectorAll("button[data-nk]").forEach((btn) =>
       btn.addEventListener("click", () => this._call("number", "set_value", { entity_id: btn.dataset.nk, value: Number(btn.dataset.v) })));
+    root.querySelectorAll("button[data-num]").forEach((btn) =>
+      btn.addEventListener("click", () => this._call("number", "set_value", { entity_id: btn.dataset.num, value: Number(btn.dataset.v) })));
+    root.querySelectorAll("input[data-sw]").forEach((cb) =>
+      cb.addEventListener("change", () => this._call("switch", cb.checked ? "turn_on" : "turn_off", { entity_id: cb.dataset.sw })));
     root.querySelectorAll("input.pname").forEach((inp) => {
       const save = () => {
         this._call("macroboard", "set_page_name", { device_id: inp.dataset.board, page: Number(inp.dataset.page), name: inp.value });
