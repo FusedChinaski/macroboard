@@ -40,6 +40,7 @@ Serve Home Assistant già funzionante.
 - **Gira la manopola** → luminosità dell'ultima luce usata, con l'arco sul display.
 - **Tieni premuta la manopola ~1 s** → QR sul display → inquadralo → scegli cosa fa ogni tasto, su entrambe le pagine, e rinomina le pagine.
 - Display e LED si accendono con un tocco o una vibrazione e si spengono dopo 10 s (modificabile: *Timeout luci* nel dispositivo).
+- **Display che si raddrizza da solo (opzionale):** con un accelerometro MPU6050 (SDA GPIO1, SCL GPIO2, VCC 3V3, GND) il display si gira quando metti la board di lato o capovolta, e nomi e segmenti puntano sempre verso i tasti. Senza sensore scegli la posizione a mano in **Orientamento** nel dispositivo. Se gira dalla parte sbagliata: *Correzione sensore orientamento* (0/90/180/270) o *Inverti sensore orientamento*.
 - **3 o 6 tasti:** si sceglie nella pagina Macroboard. Con 6 tasti il display mostra i nomi della riga che hai usato per ultima.
 - Più Macroboard in casa: ognuna ha il suo QR e la sua scheda nella pagina Macroboard.
 

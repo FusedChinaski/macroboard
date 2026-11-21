@@ -12,12 +12,13 @@
 #   manopola girata    -> luminosità dell'ultima luce usata
 #   manopola, clic     -> cambia pagina (1 <-> 2)
 #   manopola, 1 s      -> QR per assegnare i tasti
+#   board girata       -> il display si raddrizza da solo (accelerometro MPU6050, opzionale)
 # =====================================================================
 
 substitutions:
   name: macroboard
   friendly_name: Macroboard
-  display_rotation: "180"      # 0 / 90 / 180 / 270 se il display è montato ruotato
+  display_rotation: "180"      # 0 / 90 / 180 / 270 se il display è montato ruotato (board con tasti sotto)
   invert_colors: "true"      # GC9A01: true = sfondo nero. Se vedi colori in negativo metti "false"
 
 esphome:
@@ -26,13 +27,14 @@ esphome:
   name_add_mac_suffix: true
   project:
     name: ivan.macroboard
-    version: "1.2.1"
+    version: "1.3.0"
   includes:
     - macroboard_ui.h
   on_boot:
     priority: -100
     then:
       - script.execute: apply_page_colors
+      - script.execute: { id: set_orientation, o: !lambda 'return id(orient_sel).active_index().value_or(0) > 0 ? (int) id(orient_sel).active_index().value_or(1) - 1 : 0;', force: true }
       - script.execute: refresh_home
       - script.execute: wake
 
@@ -94,6 +96,47 @@ globals:
   - { id: g_data0, type: std::string, initial_value: '""' }
   - { id: g_data1, type: std::string, initial_value: '""' }
   - { id: g_names, type: std::string, initial_value: '"Pagina 1|Pagina 2"' }
+  - { id: g_orient, type: int, initial_value: "-1" }                      # orientamento applicato 0-3
+  - { id: g_ocand, type: int, initial_value: "-1" }                       # orientamento letto dal sensore
+  - { id: g_ocount, type: int, initial_value: "0" }                       # letture uguali consecutive
+
+# -------------------------------------------- orientamento (accelerometro opzionale)
+# MPU6050 su I2C: SDA GPIO1, SCL GPIO2, VCC 3V3, GND. Senza sensore la board funziona lo stesso.
+i2c:
+  sda: GPIO1
+  scl: GPIO2
+  scan: false
+
+select:
+  - platform: template
+    id: orient_sel
+    name: "Orientamento"
+    options:
+      - "Automatico"
+      - "Tasti sotto"
+      - "Tasti a sinistra"
+      - "Tasti sopra"
+      - "Tasti a destra"
+    initial_option: "Automatico"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    on_value:
+      - if:
+          condition:
+            lambda: return i > 0;
+          then:
+            - script.execute: { id: set_orientation, o: !lambda 'return (int) i - 1;', force: false }
+          else:
+            - lambda: id(g_ocount) = 0;
+
+switch:
+  - platform: template
+    id: orient_invert
+    name: "Inverti sensore orientamento"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
 
 # -------------------------------------------- valori che invia l'integrazione HA
 text:
@@ -172,6 +215,17 @@ number:
     on_value:
       - lambda: if (x < 6) id(g_row) = 0;
       - script.execute: refresh_home
+  - platform: template
+    name: "Correzione sensore orientamento"
+    id: orient_offset
+    min_value: 0
+    max_value: 270
+    step: 90
+    initial_value: 0
+    unit_of_measurement: "°"
+    optimistic: true
+    restore_value: true
+    entity_category: config
 
 sensor:
   - platform: template
@@ -194,6 +248,16 @@ sensor:
       - script.execute: { id: knob_step, delta: 5 }
     on_anticlockwise:
       - script.execute: { id: knob_step, delta: -5 }
+
+  - platform: mpu6050
+    address: 0x68
+    update_interval: 500ms
+    accel_x:
+      id: acc_x
+      internal: true
+    accel_y:
+      id: acc_y
+      internal: true
 
 # ---------------------------------------------------------------- script UI
 script:
@@ -417,6 +481,27 @@ script:
             auto t = id(ha_time).now();
             if (!t.is_valid()) return std::string("");
             return std::string(MB_GIORNI[t.day_of_week - 1]) + " " + std::to_string(t.day_of_month) + " " + MB_MESI[t.month - 1];
+
+  # Ruota il display e ridispone la home: o = 0 tasti sotto, 1 a sinistra, 2 sopra, 3 a destra
+  - id: set_orientation
+    mode: queued
+    max_runs: 2
+    parameters:
+      o: int
+      force: bool
+    then:
+      - if:
+          condition:
+            lambda: return force || (o & 3) != id(g_orient);
+          then:
+            - lambda: id(g_orient) = o & 3;
+            - lvgl.display.set_rotation:
+                rotation: !lambda 'return ((${display_rotation} - 90 * id(g_orient)) % 360 + 360) % 360;'
+            - lambda: |-
+                mb_layout(id(g_orient), id(seg_1), id(seg_2), id(seg_3), id(lbl_k1), id(lbl_k2), id(lbl_k3),
+                          id(lbl_page), id(lbl_time), id(lbl_date), id(lbl_status), id(lbl_fb_name), id(lbl_fb_state));
+                ESP_LOGI("macroboard", "Orientamento: %d", id(g_orient));
+            - script.execute: wake
 
   # Colori della pagina: 1 = arancione, 2 = verde
   - id: apply_page_colors
@@ -816,6 +901,23 @@ interval:
   - interval: 10s
     then:
       - script.execute: update_clock
+  # orientamento automatico: cambia solo dopo 3 letture uguali (~1,5 s), ignora la board piatta
+  - interval: 500ms
+    then:
+      - if:
+          condition:
+            lambda: return id(orient_sel).active_index().value_or(0) == 0;
+          then:
+            - lambda: |-
+                int c = mb_orient_from_accel(id(acc_x).state, id(acc_y).state, id(orient_invert).state,
+                                             ((int) id(orient_offset).state / 90) & 3);
+                if (c < 0) { id(g_ocount) = 0; return; }
+                if (c == id(g_ocand)) id(g_ocount)++; else { id(g_ocand) = c; id(g_ocount) = 1; }
+            - if:
+                condition:
+                  lambda: return id(g_ocount) == 3 && id(g_ocand) != id(g_orient);
+                then:
+                  - script.execute: { id: set_orientation, o: !lambda return id(g_ocand);, force: false }
 
 # ---------------------------------------------------------------- luci della board
 light:
