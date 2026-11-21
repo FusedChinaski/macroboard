@@ -25,12 +25,13 @@ esphome:
   name_add_mac_suffix: true
   project:
     name: ivan.macroboard
-    version: "1.1.0"
+    version: "1.1.1"
   includes:
     - macroboard_ui.h
   on_boot:
     priority: -100
     then:
+      - script.execute: apply_page_colors
       - script.execute: refresh_home
       - script.execute: wake
 
@@ -369,6 +370,7 @@ script:
             lambda: return id(g_ui) != 0;
           then:
             - lambda: id(g_ui) = 0;
+      - script.execute: apply_page_colors
       - lvgl.page.show: { id: page_home, animation: MOVE_LEFT, time: 300ms }
       - script.execute: refresh_home
       - lvgl.label.update:
@@ -400,6 +402,29 @@ script:
             auto t = id(ha_time).now();
             if (!t.is_valid()) return std::string("");
             return std::string(MB_GIORNI[t.day_of_week - 1]) + " " + std::to_string(t.day_of_month) + " " + MB_MESI[t.month - 1];
+
+  # Colori della pagina: 1 = arancione, 2 = verde
+  - id: apply_page_colors
+    then:
+      - if:
+          condition:
+            lambda: return id(g_page) == 0;
+          then:
+            - lvgl.arc.update: { id: seg_1, indicator: { arc_color: 0xEF9F27 } }
+            - lvgl.arc.update: { id: seg_2, indicator: { arc_color: 0xEF9F27 } }
+            - lvgl.arc.update: { id: seg_3, indicator: { arc_color: 0xEF9F27 } }
+            - lvgl.arc.update: { id: knob_arc, indicator: { arc_color: 0xFAC775 } }
+            - lvgl.label.update: { id: lbl_page, text_color: 0xEF9F27 }
+            - lvgl.label.update: { id: lbl_status, text_color: 0xEF9F27 }
+            - lvgl.label.update: { id: lbl_fb_state, text_color: 0xEF9F27 }
+          else:
+            - lvgl.arc.update: { id: seg_1, indicator: { arc_color: 0x1D9E75 } }
+            - lvgl.arc.update: { id: seg_2, indicator: { arc_color: 0x1D9E75 } }
+            - lvgl.arc.update: { id: seg_3, indicator: { arc_color: 0x1D9E75 } }
+            - lvgl.arc.update: { id: knob_arc, indicator: { arc_color: 0x5DCAA5 } }
+            - lvgl.label.update: { id: lbl_page, text_color: 0x1D9E75 }
+            - lvgl.label.update: { id: lbl_status, text_color: 0x1D9E75 }
+            - lvgl.label.update: { id: lbl_fb_state, text_color: 0x1D9E75 }
 
   - id: toggle_qr
     then:
