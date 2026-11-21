@@ -18,6 +18,7 @@ substitutions:
   name: macroboard
   friendly_name: Macroboard
   display_rotation: "0"      # 0 / 90 / 180 / 270 se il display è montato ruotato
+  invert_colors: "true"      # GC9A01: true = sfondo nero. Se vedi colori in negativo metti "false"
 
 esphome:
   name: ${name}
@@ -455,6 +456,7 @@ display:
     dc_pin: GPIO9
     reset_pin: GPIO14
     rotation: ${display_rotation}
+    invert_colors: ${invert_colors}
     auto_clear_enabled: false
     update_interval: never
 
