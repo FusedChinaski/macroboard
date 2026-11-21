@@ -469,7 +469,6 @@ display:
     cs_pin: GPIO10
     dc_pin: GPIO9
     reset_pin: GPIO14
-    rotation: ${display_rotation}
     invert_colors: ${invert_colors}
     auto_clear_enabled: false
     update_interval: never
@@ -483,6 +482,7 @@ font:
 
 lvgl:
   displays: [main_display]
+  rotation: ${display_rotation}
   buffer_size: 25%
   default_font: f_txt
   bg_color: 0x000000
