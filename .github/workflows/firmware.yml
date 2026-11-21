@@ -1,0 +1,108 @@
+# Compila il firmware Macroboard e lo pubblica come release GitHub.
+# Le board controllano .../releases/latest/download/manifest.json e si aggiornano da sole.
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firmware
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache strumenti ESPHome
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.esphome
+            firmware/.esphome
+          key: esphome-${{ runner.os }}-${{ hashFiles('firmware/macroboard-kit.yaml') }}
+          restore-keys: esphome-${{ runner.os }}-
+
+      - name: Installa ESPHome
+        run: pip install esphome
+
+      - name: Versione
+        id: ver
+        run: |
+          V=$(grep -m1 -E '^\s+version:\s*"' firmware/macroboard-kit.yaml | sed -E 's/.*"(.*)".*/\1/')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Versione firmware: $V"
+
+      - name: Esiste già questa versione?
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.ver.outputs.version }}" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::La release v${{ steps.ver.outputs.version }} esiste già: alza 'version' nel firmware per pubblicare."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compila
+        run: esphome compile firmware/macroboard-kit.yaml
+
+      - name: Prepara file e manifest
+        if: steps.exists.outputs.skip == 'false'
+        run: |
+          set -e
+          V="${{ steps.ver.outputs.version }}"
+          OTA=$(find firmware/.esphome/build -name "firmware.ota.bin" | head -1)
+          FACTORY=$(find firmware/.esphome/build -name "firmware.factory.bin" | head -1)
+          [ -z "$OTA" ] && OTA=$(find firmware/.esphome/build -name "firmware.bin" | head -1)
+          echo "OTA: $OTA  FACTORY: $FACTORY"
+          mkdir -p out
+          cp "$OTA" out/macroboard-ota.bin
+          cp "$FACTORY" out/macroboard-factory.bin
+          MD5=$(md5sum out/macroboard-ota.bin | cut -d' ' -f1)
+          BASE="https://github.com/${{ github.repository }}/releases/download/v$V"
+          cat > out/manifest.json <<EOF
+          {
+            "name": "Macroboard",
+            "version": "$V",
+            "home_assistant_domain": "esphome",
+            "new_install_prompt_erase": false,
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [{ "path": "$BASE/macroboard-factory.bin", "offset": 0 }],
+                "ota": {
+                  "path": "$BASE/macroboard-ota.bin",
+                  "md5": "$MD5",
+                  "release_url": "https://github.com/${{ github.repository }}/releases/tag/v$V",
+                  "summary": "Macroboard $V"
+                }
+              }
+            ]
+          }
+          EOF
+          cat out/manifest.json
+
+      - name: Pubblica release
+        if: steps.exists.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          gh release create "v$V" out/macroboard-ota.bin out/macroboard-factory.bin out/manifest.json \
+            --title "Firmware $V" --notes "Firmware Macroboard $V. Le board si aggiornano da sole entro 6 ore." --latest

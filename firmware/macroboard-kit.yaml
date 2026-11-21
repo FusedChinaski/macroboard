@@ -26,7 +26,7 @@ esphome:
   name_add_mac_suffix: true
   project:
     name: ivan.macroboard
-    version: "1.1.1"
+    version: "1.2.0"
   includes:
     - macroboard_ui.h
   on_boot:
@@ -54,6 +54,20 @@ api:
 
 ota:
   - platform: esphome
+  - platform: http_request
+
+# ---------------------------------------------------------------- aggiornamenti automatici
+# Ogni modifica al firmware su GitHub viene compilata da GitHub Actions e pubblicata come release.
+# La board controlla ogni 6 ore e si aggiorna da sola; in Home Assistant compare anche "Firmware".
+http_request:
+  verify_ssl: true
+
+update:
+  - platform: http_request
+    id: fw_update
+    name: "Firmware"
+    source: https://github.com/FusedChinaski/macroboard/releases/latest/download/manifest.json
+    update_interval: 6h
 
 wifi:
   ap:
@@ -753,6 +767,17 @@ lvgl:
 
 # ---------------------------------------------------------------- aggiornamenti periodici
 interval:
+  - interval: 6h
+    startup_delay: 5min
+    then:
+      - update.check: fw_update
+      - delay: 1min
+      - if:
+          condition:
+            update.is_available: fw_update
+          then:
+            - logger.log: "Nuovo firmware disponibile: installo"
+            - update.perform: fw_update
   - interval: 1s
     then:
       - if:
