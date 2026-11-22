@@ -27,7 +27,7 @@ esphome:
   name_add_mac_suffix: true
   project:
     name: ivan.macroboard
-    version: "1.3.1"
+    version: "1.3.2"
   includes:
     - macroboard_ui.h
   on_boot:
@@ -63,6 +63,10 @@ ota:
 # La board controlla ogni 6 ore e si aggiorna da sola; in Home Assistant compare anche "Firmware".
 http_request:
   verify_ssl: true
+  # GitHub reindirizza i download su un indirizzo di ~530 caratteri: con i buffer
+  # predefiniti (512) il download fallisce e la board non si aggiorna mai.
+  buffer_size_rx: 2048
+  buffer_size_tx: 2048
 
 update:
   - platform: http_request
